@@ -1,0 +1,30 @@
+name: Catch Up Main
+
+# Lands an already-rebased upstream catch-up branch on `main`, archiving the
+# outgoing main commit first.
+#
+# The rebase itself is local work — conflict resolution is not automatable.
+# Push the result as catchup/<something>, then dispatch this to land it.
+#
+# This does not deploy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Rebased branch to land, e.g. catchup/upstream-2026-09-21"
+        required: true
+
+jobs:
+  catchup:
+    uses: ./.github/workflows/archive-and-move-ref.yml
+    # Read-only: the PAT does the writing.
+    permissions:
+      contents: read
+    # Reusable workflows do not see repo secrets unless passed.
+    secrets:
+      REF_MOVER_TOKEN: ${{ secrets.REF_MOVER_TOKEN }}
+    with:
+      target: main
+      allowed_source: refs/remotes/origin/catchup/*
+      source: refs/remotes/origin/${{ inputs.branch }}
