@@ -6,11 +6,16 @@ name: Archive and Move Ref
 # (target=prod, source=origin/main); rollback and the main catch-up are the
 # same operation with different arguments.
 #
-# This never deploys. Pushes made with GITHUB_TOKEN do not trigger other
-# workflows, so moving a ref cannot ship anything on its own.
+# Pushes with a PAT, not GITHUB_TOKEN: moving a branch across differing
+# `.github/workflows/` contents needs the `workflow` scope, which `permissions:`
+# cannot grant. Unlike GITHUB_TOKEN, a PAT push does trigger other workflows.
 
 on:
   workflow_call:
+    secrets:
+      REF_MOVER_TOKEN:
+        description: "PAT with Contents + Workflows write on this repo"
+        required: true
     inputs:
       target:
         description: "Branch to back up and then overwrite, e.g. prod"
@@ -35,8 +40,9 @@ jobs:
   archive-and-move-ref:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Read-only: the PAT does the writing, GITHUB_TOKEN just reads.
     permissions:
-      contents: write
+      contents: read
     # Keyed on the target, so everything contending over one branch shares a
     # lane while unrelated targets run in parallel. Never cancel: a cancel
     # could land between the backup tag and the push.
@@ -49,10 +55,8 @@ jobs:
           SOURCE: ${{ inputs.source }}
           ALLOWED_SOURCE: ${{ inputs.allowed_source }}
         run: |
-          # Checked separately from the glob below: `*` in a case pattern
-          # matches `/` and `.`, so refs/tags/backup/prod/../../heads/main
-          # satisfies refs/tags/backup/prod/*. Git rejects `..` in a ref name
-          # too, but that is its business, not this guard's.
+          # Separate from the glob: `*` in a case pattern matches `/` and `.`,
+          # so refs/tags/backup/prod/../../heads/main would satisfy it.
           case "$SOURCE" in
             *..*)
               echo "::error::source may not contain '..': $SOURCE"
@@ -72,11 +76,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          # Load-bearing. Only fetch-depth: 0 makes checkout use the wildcard
-          # refspecs (+refs/heads/*:refs/remotes/origin/* and
-          # +refs/tags/*:refs/tags/*), which is what puts the target branch and
-          # the backup tags in the clone at all. Anything shallower fetches
-          # just the dispatch ref and Resolve Refs cannot see them.
+          # persist-credentials (default true) stores this in git config, which
+          # is what authenticates the pushes below.
+          token: ${{ secrets.REF_MOVER_TOKEN }}
+          # Load-bearing: only fetch-depth 0 uses the wildcard refspecs, which
+          # is what puts origin/<target> and the backup tags in the clone.
           fetch-depth: 0
 
       - name: Resolve Refs

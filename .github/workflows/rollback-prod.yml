@@ -7,8 +7,7 @@ name: Rollback Prod
 # complete history of every state prod has been in.
 #
 # This does not deploy. Run "Deploy Prod" afterwards to apply the restored
-# commit. Pushes made with GITHUB_TOKEN do not trigger other workflows, so
-# rolling the branch back leaves prod running the bad build until you do.
+# commit — until you do, prod is still running the bad build.
 #
 # All the mechanics live in Archive and Move Ref. This file is just the prod
 # arguments plus a dispatch button.
@@ -26,11 +25,12 @@ on:
 jobs:
   rollback:
     uses: ./.github/workflows/archive-and-move-ref.yml
-    # Permissions can only be maintained or reduced down a reusable-workflow
-    # chain, never elevated, so the worker's `contents: write` has to be
-    # granted here too or its push fails.
+    # Read-only: the PAT does the writing.
     permissions:
-      contents: write
+      contents: read
+    # Reusable workflows do not see repo secrets unless passed.
+    secrets:
+      REF_MOVER_TOKEN: ${{ secrets.REF_MOVER_TOKEN }}
     with:
       target: prod
       allowed_source: refs/tags/backup/prod/*

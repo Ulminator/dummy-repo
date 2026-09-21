@@ -7,27 +7,24 @@ name: Promote Prod
 # rather than a force-push from someone's laptop.
 #
 # This does not deploy. Run "Deploy Prod" afterwards to apply the promoted
-# commit. Pushes made with GITHUB_TOKEN do not trigger other workflows, so the
-# promotion cannot deploy anything on its own.
+# commit. Nothing listens on push today, but the worker pushes with a PAT, so
+# that is convention rather than a guarantee.
 #
 # All the mechanics live in Archive and Move Ref. This file is just the prod
 # arguments plus a dispatch button.
 
 on:
   workflow_dispatch:
-    inputs:
-      reason:
-        description: "Why are you promoting?"
-        required: true
 
 jobs:
   promote:
     uses: ./.github/workflows/archive-and-move-ref.yml
-    # Permissions can only be maintained or reduced down a reusable-workflow
-    # chain, never elevated, so the worker's `contents: write` has to be
-    # granted here too or its push fails.
+    # Read-only: the PAT does the writing.
     permissions:
-      contents: write
+      contents: read
+    # Reusable workflows do not see repo secrets unless passed.
+    secrets:
+      REF_MOVER_TOKEN: ${{ secrets.REF_MOVER_TOKEN }}
     with:
       target: prod
       allowed_source: refs/remotes/origin/main
