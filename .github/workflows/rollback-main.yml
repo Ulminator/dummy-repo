@@ -1,0 +1,32 @@
+name: Rollback Main
+
+# Points `main` back at a commit a previous run archived, e.g. when a catch-up
+# turns out to be bad.
+#
+# The outgoing commit is archived on the way out, so the catch-up work is
+# parked on a tag rather than lost — fix forward from it instead of redoing the
+# rebase.
+#
+# This does not deploy, and it does not touch prod. If the bad commit was
+# already promoted, roll prod back separately.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Backup tag to restore, e.g. backup/main/2026-09-21T2043Z-c4e1733"
+        required: true
+
+jobs:
+  rollback:
+    uses: ./.github/workflows/archive-and-move-ref.yml
+    # Read-only: the PAT does the writing.
+    permissions:
+      contents: read
+    # Reusable workflows do not see repo secrets unless passed.
+    secrets:
+      REF_MOVER_TOKEN: ${{ secrets.REF_MOVER_TOKEN }}
+    with:
+      target: main
+      allowed_source: refs/tags/backup/main/*
+      source: refs/tags/${{ inputs.tag }}
