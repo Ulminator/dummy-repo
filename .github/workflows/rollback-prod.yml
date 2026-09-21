@@ -18,9 +18,6 @@ on:
       tag:
         description: "Backup tag to restore, e.g. backup/prod/2026-09-21T1947Z-98d4c86"
         required: true
-      reason:
-        description: "Why are you rolling back?"
-        required: true
 
 jobs:
   rollback:
