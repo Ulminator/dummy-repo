@@ -1,0 +1,59 @@
+name: Deploy Prod
+
+# CD for prod. Anything that moves the `prod` ref deploys it — promote ships
+# forward, rollback ships back. The ref is the source of truth for what is
+# deployed.
+#
+# Fires because Archive and Move Ref pushes with a PAT; GITHUB_TOKEN pushes
+# would not trigger this. The branch filter keeps the backup tag push from
+# triggering a second run.
+
+on:
+  push:
+    branches: [prod]
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false # don't cancel a terraform run mid-apply
+
+permissions:
+  contents: read
+
+jobs:
+  # Both jobs carry the environment because the prod credentials are
+  # environment secrets — plan needs them to read state, same as apply.
+  #
+  # Open question: with the same environment on both, does GitHub prompt once
+  # per run or once per job? Docs are phrased per-job but do not say. Untestable
+  # here (required reviewers need a paid plan); if it turns out to be two
+  # prompts, the fallback is one job with a manual-approval step between plan
+  # and apply.
+  plan:
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check the environment resolved
+        env:
+          DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET }}
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+        run: |
+          echo "var DEPLOY_TARGET = ${DEPLOY_TARGET:-<unset>}"
+          # Never echo the secret; GitHub masks it to *** anyway. Length is
+          # enough to prove it resolved rather than came back empty.
+          if [ -n "$DEPLOY_TOKEN" ]; then
+            echo "secret DEPLOY_TOKEN = set, ${#DEPLOY_TOKEN} chars"
+          else
+            echo "::error::DEPLOY_TOKEN did not resolve — is it on the prod environment?"
+            exit 1
+          fi
+      - run: echo "terraform plan"
+
+  apply:
+    needs: [plan]
+    runs-on: ubuntu-latest
+    # Split from plan only so the "read the plan, then approve" gate has
+    # somewhere to live: `environment:` is job-level.
+    environment: prod
+    steps:
+      - run: echo "terraform apply"
