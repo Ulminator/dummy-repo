@@ -1,0 +1,95 @@
+name: Archive and Move Ref
+
+# Archives a branch as a tag, then force-moves it onto another ref.
+#
+# Callers supply the pair. Today that is only Promote Prod
+# (target=prod, source=origin/main); rollback and the main catch-up are the
+# same operation with different arguments.
+#
+# This never deploys. Pushes made with GITHUB_TOKEN do not trigger other
+# workflows, so moving a ref cannot ship anything on its own.
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: "Branch to back up and then overwrite, e.g. prod"
+        required: true
+        type: string
+      source:
+        description: >-
+          Committish the target becomes. Must be unambiguous: a bare `main`
+          would resolve to the local branch checkout created, which is the
+          dispatch ref and may be stale. Pass refs/remotes/origin/main or a
+          full tag ref.
+        required: true
+        type: string
+
+jobs:
+  archive-and-move-ref:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    # Keyed on the target, so everything contending over one branch shares a
+    # lane while unrelated targets run in parallel. Never cancel: a cancel
+    # could land between the backup tag and the push.
+    concurrency:
+      group: ref-${{ inputs.target }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # Load-bearing. Only fetch-depth: 0 makes checkout use the wildcard
+          # refspecs (+refs/heads/*:refs/remotes/origin/* and
+          # +refs/tags/*:refs/tags/*), which is what puts the target branch and
+          # the backup tags in the clone at all. Anything shallower fetches
+          # just the dispatch ref and Resolve Refs cannot see them.
+          fetch-depth: 0
+
+      - name: Resolve Refs
+        id: refs
+        env:
+          TARGET: ${{ inputs.target }}
+          SOURCE: ${{ inputs.source }}
+        run: |
+          # ^{commit} peels annotated tags, so a rollback's source resolves to
+          # a commit rather than a tag object. No-op for a branch or a SHA.
+          OLD=$(git rev-parse --verify "refs/remotes/origin/${TARGET}^{commit}")
+          NEW=$(git rev-parse --verify "${SOURCE}^{commit}")
+
+          if [ "$OLD" = "$NEW" ]; then
+            echo "::notice::$TARGET is already at $NEW. Nothing to move."
+            NOOP=true
+          else
+            NOOP=false
+          fi
+
+          {
+            echo "old=$OLD"
+            echo "new=$NEW"
+            echo "noop=$NOOP"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Back up current target
+        if: steps.refs.outputs.noop == 'false'
+        env:
+          TARGET: ${{ inputs.target }}
+          OLD: ${{ steps.refs.outputs.old }}
+        run: |
+          TAG="backup/${TARGET}/$(date -u +%Y-%m-%dT%H%MZ)-${OLD:0:7}"
+          git tag "$TAG" "$OLD"
+          git push origin "refs/tags/$TAG"
+
+      - name: Move
+        if: steps.refs.outputs.noop == 'false'
+        env:
+          TARGET: ${{ inputs.target }}
+          OLD: ${{ steps.refs.outputs.old }}
+          NEW: ${{ steps.refs.outputs.new }}
+        run: |
+          # The lease pins the target to the commit we read in Resolve Refs, so
+          # if anything moved it since, this is rejected rather than clobbering.
+          git push --force-with-lease="${TARGET}:${OLD}" \
+            origin "${NEW}:refs/heads/${TARGET}"

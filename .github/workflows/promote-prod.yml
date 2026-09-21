@@ -9,6 +9,9 @@ name: Promote Prod
 # This does not deploy. Run "Deploy Prod" afterwards to apply the promoted
 # commit. Pushes made with GITHUB_TOKEN do not trigger other workflows, so the
 # promotion cannot deploy anything on its own.
+#
+# All the mechanics live in Archive and Move Ref. This file is just the prod
+# arguments plus a dispatch button.
 
 on:
   workflow_dispatch:
@@ -17,69 +20,14 @@ on:
         description: "Why are you promoting?"
         required: true
 
-concurrency:
-  # The group names the ref, not this workflow, so anything else that moves
-  # `prod` (a rollback, say) shares the lane by using the same string. Not
-  # keyed on github.ref: two promotions dispatched from different refs still
-  # contend over the same branch.
-  group: prod-ref
-  # Never cancel a run mid-flight; it could land between the backup tag and
-  # the push.
-  cancel-in-progress: false
-
 jobs:
-  archive-and-move-ref:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  promote:
+    uses: ./.github/workflows/archive-and-move-ref.yml
+    # Permissions can only be maintained or reduced down a reusable-workflow
+    # chain, never elevated, so the worker's `contents: write` has to be
+    # granted here too or its push fails.
     permissions:
       contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          # Load-bearing. Only fetch-depth: 0 makes checkout use the wildcard
-          # refspec (+refs/heads/*:refs/remotes/origin/*), which is what puts
-          # origin/prod in the clone at all. Anything shallower fetches just
-          # the dispatch ref and Resolve Refs cannot see prod.
-          fetch-depth: 0
-
-      - name: Resolve Refs
-        id: refs
-        run: |
-          # validation of remotes for testing
-          git remote -v
-
-          OLD=$(git rev-parse refs/remotes/origin/prod)
-          NEW=$(git rev-parse refs/remotes/origin/main)
-
-          if [ "$OLD" = "$NEW" ]; then
-            echo "::notice::prod is already at $NEW. Nothing to promote."
-            NOOP=true
-          else
-            NOOP=false
-          fi
-
-          {
-            echo "old=$OLD"
-            echo "new=$NEW"
-            echo "noop=$NOOP"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Back up current prod
-        if: steps.refs.outputs.noop == 'false'
-        env:
-          OLD: ${{ steps.refs.outputs.old }}
-        run: |
-          TAG="backup/prod/$(date -u +%Y-%m-%dT%H%MZ)-${OLD:0:7}"
-          git tag "$TAG" "$OLD" # -m "prod before promote: $REASON"
-          git push origin "refs/tags/$TAG"
-
-      - name: Promote
-        if: steps.refs.outputs.noop == 'false'
-        env:
-          OLD: ${{ steps.refs.outputs.old }}
-          NEW: ${{ steps.refs.outputs.new }}
-        run: |
-          # The lease pins prod to the commit we read in Resolve refs, so if
-          # anything moved it since, this is rejected rather than clobbering.
-          git push --force-with-lease="prod:${OLD}" origin "$NEW:refs/heads/prod"
+    with:
+      target: prod
+      source: refs/remotes/origin/main
