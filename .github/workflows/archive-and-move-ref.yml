@@ -113,6 +113,14 @@ jobs:
           TARGET: ${{ inputs.target }}
           OLD: ${{ steps.refs.outputs.old }}
         run: |
+          # A failed Move leaves this tag behind, so a retry would archive the
+          # same commit again. One tag per state, not per attempt.
+          EXISTING=$(git tag --list "backup/${TARGET}/*" --points-at "$OLD" | head -1)
+          if [ -n "$EXISTING" ]; then
+            echo "::notice::$OLD is already archived as $EXISTING"
+            exit 0
+          fi
+
           TAG="backup/${TARGET}/$(date -u +%Y-%m-%dT%H%MZ)-${OLD:0:7}"
           git tag "$TAG" "$OLD"
           git push origin "refs/tags/$TAG"
