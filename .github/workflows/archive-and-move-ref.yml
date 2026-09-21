@@ -18,10 +18,16 @@ on:
         type: string
       source:
         description: >-
-          Committish the target becomes. Must be unambiguous: a bare `main`
-          would resolve to the local branch checkout created, which is the
-          dispatch ref and may be stale. Pass refs/remotes/origin/main or a
-          full tag ref.
+          What the target becomes: a branch, tag, or SHA. Pass a fully
+          qualified ref — a bare `main` resolves against local refs first,
+          so it would pick the dispatch ref rather than origin's.
+        required: true
+        type: string
+      allowed_source:
+        # A caller that takes its source from a dispatch input is handing a
+        # human a "point this branch anywhere" box. Each caller declares the
+        # shape its source may have, and this workflow enforces it.
+        description: "Glob the source must match, e.g. refs/tags/backup/prod/*"
         required: true
         type: string
 
@@ -38,6 +44,31 @@ jobs:
       group: ref-${{ inputs.target }}
       cancel-in-progress: false
     steps:
+      - name: Validate source
+        env:
+          SOURCE: ${{ inputs.source }}
+          ALLOWED_SOURCE: ${{ inputs.allowed_source }}
+        run: |
+          # Checked separately from the glob below: `*` in a case pattern
+          # matches `/` and `.`, so refs/tags/backup/prod/../../heads/main
+          # satisfies refs/tags/backup/prod/*. Git rejects `..` in a ref name
+          # too, but that is its business, not this guard's.
+          case "$SOURCE" in
+            *..*)
+              echo "::error::source may not contain '..': $SOURCE"
+              exit 1
+              ;;
+          esac
+
+          # Unquoted on purpose: ALLOWED_SOURCE is a glob, not a literal.
+          case "$SOURCE" in
+            $ALLOWED_SOURCE) ;;
+            *)
+              echo "::error::source \"$SOURCE\" does not match \"$ALLOWED_SOURCE\". Refusing to move ${{ inputs.target }}."
+              exit 1
+              ;;
+          esac
+
       - name: Checkout
         uses: actions/checkout@v6
         with:

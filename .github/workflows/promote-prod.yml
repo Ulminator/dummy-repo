@@ -30,4 +30,5 @@ jobs:
       contents: write
     with:
       target: prod
+      allowed_source: refs/remotes/origin/main
       source: refs/remotes/origin/main
